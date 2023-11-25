@@ -1,6 +1,6 @@
 ;;; aide.el --- An Emacs front end for GPT APIs like OpenAI  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021-2024 Junji Zhi and contributors
+;; Copyright (C) 2021-2024 Junji Zhi and Nick May
 
 ;; Author: Junji Zhi
 ;; Keywords: gpt-4 openai chatgpt
@@ -33,28 +33,33 @@
   :group 'external
   :prefix "aide-")
 
-(defcustom aide-chat-model "gpt-3.5-turbo"
+
+;(defcustom aide-chat-model "gpt-4-1106-preview" ; best in class; EXPENSIVE. ~slow
+;(defcustom aide-chat-model "gpt-4" ; good enough
+(defcustom aide-chat-model "gpt-3.5-turbo" ; good enough; cheap! fast! (gpt-3.5-turbo-instruct not available at chat endpoint)
   "The model paramater that aide.el sends to OpenAI Chat API."
   :type 'string
   :group 'aide)
 
-(defcustom aide-max-input-tokens 3800
+; GPT-4 and GPT 3.5 are 4k, with more expensive options available, including upcoming 128k context window. 2023-11-24
+(defcustom aide-max-input-tokens 4000 ;128000
   "The maximum number of tokens that aide.el sends to OpenAI API.
 Only affects the send COMPLETE buffer function."
   :type 'integer
   :group 'aide)
 
-;; Not currently utilized.
-;; (defcustom aide-max-output-tokens 100
-;;   "The max-tokens parameter that aide.el sends to OpenAI API."
-;;   :type 'integer
-;;   :group 'aide)
+;; above ~480-530 [~~400-425 words] you get that concluding block of text again that's useless.
+;; Remember this is TOKENs not words.
+(defcustom aide-max-output-tokens 430 ;; don't go above 480
+  "The max-tokens parameter that aide.el sends to OpenAI API."
+  :type 'integer
+  :group 'aide)
 
-;; Not currently utilized.
-;; (defcustom aide-temperature 1
-;;   "The temperature paramater that aide.el sends to OpenAI API. 1 is default."
-;;   :type 'float
-;;   :group 'aide)
+;; Not currently utilized. TODO
+(defcustom aide-temperature 1.1
+  "The temperature paramater that aide.el sends to OpenAI API. 1 is default."
+  :type 'float
+  :group 'aide)
 
 ;; Not currently utilized.
 ;; (defcustom aide-top-p 0.1
@@ -77,6 +82,17 @@ Only affects the send COMPLETE buffer function."
 (defcustom aide-openai-api-key-getter (lambda () openai-api-key)
   "Function that retrieves the valid OpenAI API key"
   :type 'function
+  :group 'aide)
+
+(defcustom aide-memory-file "~/memory.txt"
+  "The location in the file system where all of the prompt information, the memory,
+that doesn't change between generations should be kept."
+  :type 'string
+  :group 'aide)
+
+(defcustom use-memory 1
+  "Should the system load the memory file, additional prompt information, or not?"
+  :type 'boolean
   :group 'aide)
 
 (defcustom aide-save-chat-file "~/aide-log.txt"
@@ -139,70 +155,41 @@ per line for text explanations and add line breaks if needed. Do not apply the c
     (aide-openai-chat-region-insert region-start region-end)))
 
 (defun aide-openai-chat-buffer-insert (&optional result)
-  "Send the ENTIRE buffer, up to max tokens, to OpenAI and insert the result to
-the end of buffer.
-Assumes the user is providing a prompt to ChatGPT somewhere in the enclosed text."
+  "Send the ENTIRE buffer, before the point, up to max tokens, to OpenAI and
+insert the result to the current point of the buffer.
+The user may also optionally set 'aide-memory-file' and 'aide-use-memory' to provide
+additional context to the AI. The user will be prompted for a one-line prompt to
+provide to the AI to guide the current generation.
+Memory, prompt and then buffer will be sent, without exceeding max tokens."
   (interactive)
-  (if result
-      (progn
-        (let* ((original-point (point)))
-          (goto-char (point-max))
-          (insert "\n" result)
+  (let* ((original-point (point)))
+    (if result
+        (progn
+          (insert "\n" result) ; insert at current point
           (fill-paragraph)
-          (let ((x (make-overlay original-point (point-max))))
-            (overlay-put x 'face '(:foreground "orange red")))))
-   (aide--openai-chat-string
-    (buffer-substring-no-properties (get-min-point) (point-max))
-    'aide-openai-chat-buffer-insert)))
-
-;; TODO rewrite to use chat with appropriate prompt. Complete endpoint gone in 1/2024
-;; (defun aide-openai-tldr-region (start end)
-;;   "Send the region to OpenAI autocomplete engine and get the TLDR result.
-
-;; START and END are selected region boundaries."
-;;   (interactive "r")
-;;   (let* ((region (buffer-substring-no-properties start end))
-;;          (result (aide--openai-complete-string (concat region "\n\n tl;dr:"))))
-;;     (message "%s" result)))
-
-
-;; TODO rewrite to use chat with appropriate prompt. Complete endpoint gone in 1/2024
-;; (defun aide-openai-edits-region-insert (start end)
-;;    "Send the region to OpenAI edits and insert the result to the end of region.
-;; START and END are selected region boundaries."
-;;   (interactive "r")
-;;   (let* ((region (buffer-substring-no-properties start end))
-;;          (result (aide-openai-edits (funcall aide-openai-api-key-getter) "Rephrase the text" region)))
-;;     (goto-char end)
-;;     (if result
-;;         (progn
-;;           (insert "\n" result)
-;;           (fill-paragraph)
-;;           (let ((x (make-overlay end (point))))
-;;             (overlay-put x 'face '(:foreground "orange red")))
-;;           result)
-;;       (message "Empty result"))))
-
-;; TODO rewrite to use chat with appropriate prompt. Edit endpoint gone in 1/2024
-;; (defun aide-openai-edits-region-replace (start end)
-;;   "Send the region to OpenAI edits and replace the region.
-
-;; START and END are selected region boundaries.
-
-;; The original content will be stored in the kill ring."
-;;   (interactive "r")
-;;   (let* ((region (buffer-substring-no-properties start end))
-;;          (result (aide-openai-edits (funcall aide-openai-api-key-getter) "Rephrase the text" region)))
-;;     (goto-char end)
-;;     (if result
-;;         (progn
-;;           (kill-region start end)
-;;           (insert "\n" result)
-;;           (fill-paragraph)
-;;           (let ((x (make-overlay end (point))))
-;;             (overlay-put x 'face '(:foreground "orange red")))
-;;           result)
-;;       (message "Empty result"))))
+          (let ((x (make-overlay original-point
+                                 (+ original-point (length result)))))
+            (overlay-put x 'face '(:foreground "orange red"))))
+      (progn
+        ;; account for memory size
+        (if use-memory
+            (if (file-readable-p aide-memory-file)
+                (progn
+                  (setq memory (file-to-string aide-memory-file))
+                  (if aide-max-input-tokens
+                      (setq aide-max-input-tokens (- aide-max-input-tokens (length memory)))))))
+        (prompt-for-gpt-input)
+        ;; account for prompt size; prompt shouldn't push us past max tokens
+        (setq aide-max-input-tokens (- aide-max-input-tokens (length gpt-prompt)))
+        (aide--openai-chat-string
+         (concat
+          memory ;; Memory first for basic context that doesn't change; who I am, what we're doing..
+          "Instructions: "
+          gpt-prompt
+          "\n\nThe story so far: \n\n"
+          ;; Entire buffer from start to current point.
+          (buffer-substring-no-properties (get-min-point) original-point))
+         'aide-openai-chat-buffer-insert)))))
 
 ;; private; should not be called by users
 
@@ -214,8 +201,8 @@ PROMPT is the prompt string we send to the API."
   (let* ((result nil)
         (auth-value (format "Bearer %s" api-key)) 
         (payload (json-encode `(("model"  . ,aide-chat-model)
-;                                ("max_tokens" . ,aide-max-output-tokens)
-;                                ("temperature" . ,aide-temperature)
+                                ("max_tokens" . ,aide-max-output-tokens)
+                                ("temperature" . ,aide-temperature)
 ;                               ("frequency_penalty" . ,aide-frequency-penalty)
 ;                                ("presence_penalty" . ,aide-presence-penalty)
 ;                               ("top_p" . ,aide-top-p)))
@@ -244,7 +231,7 @@ PROMPT is the prompt string we send to the API."
 
 (defun get-min-point ()
   "OpenAI API limits requests of > ~4000 tokens (model-specific; davinci
-maxes out at request of 4000 tokens; ~15200 char"
+maxes out at request of 4000 tokens; ~15200 char)"
   (if (> (buffer-size) (* 4 (or aide-max-input-tokens 3800))) ;; 1 tokens = ~4 char
       (- (point-max) (* 4 (or aide-max-input-tokens 3800)))
     (point-min)))
@@ -253,8 +240,21 @@ maxes out at request of 4000 tokens; ~15200 char"
   (if aide-save-chat-file
       (write-region
       ; Starting with * allows users to view log w/ org mode for easy folding
-       (concat "*" (current-time-string) "\n" prompt "\n" response)
+       (concat "\n\n* " (current-time-string) "\n" prompt "\n" response)
        nil aide-save-chat-file 'append)))
+
+(defvar gpt-prompt "" "Prompt for OpenAI chat.")
+
+(defun prompt-for-gpt-input ()
+  "Prompt the user to enter a prompt, or accept the prompt they used last time."
+  (interactive "s")
+  (setq gpt-prompt (read-string "Enter your prompt here (comes after memory): " gpt-prompt)))
+
+(defun file-to-string (file)
+  "File to string function"
+  (with-temp-buffer
+    (insert-file-contents file)
+    (buffer-string)))
 
 (provide 'aide)
 ;;; aide.el ends here
