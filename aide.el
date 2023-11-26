@@ -57,7 +57,6 @@ Only affects the send COMPLETE buffer function."
   :type 'integer
   :group 'aide)
 
-;; Not currently utilized. TODO
 (defcustom aide-temperature 1.1
   "The temperature paramater that aide.el sends to OpenAI API. 1 is default."
   :type 'float
