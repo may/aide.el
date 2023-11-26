@@ -41,12 +41,14 @@
   :type 'string
   :group 'aide)
 
-; GPT-4 and GPT 3.5 are 4k, with more expensive options available, including upcoming 128k context window. 2023-11-24
-(defcustom aide-max-input-tokens 4000 ;128000
+; GPT-4 and GPT 3.5 are 4k, with more expensive options available
+(defcustom aide-max-input-tokens 4000 ; 16,385 coming in Dec 2023 ;; 128000
   "The maximum number of tokens that aide.el sends to OpenAI API.
 Only affects the send COMPLETE buffer function."
   :type 'integer
   :group 'aide)
+
+(defvar max-chars (* aide-max-input-tokens 4)) ; 1 token ~= 4 characters
 
 ;; above ~480-530 [~~400-425 words] you get that concluding block of text again that's useless.
 ;; Remember this is TOKENs not words.
@@ -170,26 +172,9 @@ Memory, prompt and then buffer will be sent, without exceeding max tokens."
           (let ((x (make-overlay original-point
                                  (+ original-point (length result)))))
             (overlay-put x 'face '(:foreground "orange red"))))
-      (progn
-        ;; account for memory size
-        (if use-memory
-            (if (file-readable-p aide-memory-file)
-                (progn
-                  (setq memory (file-to-string aide-memory-file))
-                  (if aide-max-input-tokens
-                      (setq aide-max-input-tokens (- aide-max-input-tokens (length memory)))))))
-        (prompt-for-gpt-input)
-        ;; account for prompt size; prompt shouldn't push us past max tokens
-        (setq aide-max-input-tokens (- aide-max-input-tokens (length gpt-prompt)))
-        (aide--openai-chat-string
-         (concat
-          memory ;; Memory first for basic context that doesn't change; who I am, what we're doing..
-          "Instructions: "
-          gpt-prompt
-          "\n\nThe story so far: \n\n"
-          ;; Entire buffer from start to current point.
-          (buffer-substring-no-properties (get-min-point) original-point))
-         'aide-openai-chat-buffer-insert)))))
+      (aide--openai-chat-string
+       (prepare-prompt-memory-input original-point)
+       'aide-openai-chat-buffer-insert))))
 
 ;; private; should not be called by users
 
@@ -208,39 +193,94 @@ PROMPT is the prompt string we send to the API."
 ;                               ("top_p" . ,aide-top-p)))
                                 ("messages" . [(("role" . "user") ("content" . ,prompt))])))))
     (message "Waiting for OpenAI...")
-    (request
-      "https://api.openai.com/v1/chat/completions"
-      :type "POST"
-      :data payload
-      :headers `(("Authorization" . ,auth-value) ("Content-Type" . "application/json"))
-      :sync nil
-      :parser 'json-read
-      :success (cl-function
-                (lambda (&key data &allow-other-keys)
-                  (progn
-                    (setq result (alist-get 'content (alist-get 'message (elt (alist-get 'choices data) 0))))
-                    (log-call-response prompt result)
-                    (funcall callback result)
-                    (message "Done."))))
-      :error (cl-function (lambda (&rest args &key error-thrown &allow-other-keys)
-                 (message "Got error: %S, payload: %S" error-thrown payload))))
-      result))
+    (let ((request-timestamp (current-time)))
+      (request
+        "https://api.openai.com/v1/chat/completions"
+        :type "POST"
+        :data payload
+        :headers `(("Authorization" . ,auth-value) ("Content-Type" . "application/json"))
+        :sync nil
+        :parser 'json-read
+        :success (cl-function
+                  (lambda (&key data &allow-other-keys)
+                    (progn
+                      (setq result (alist-get 'content (alist-get 'message (elt (alist-get 'choices data) 0))))
+                      (log-call-response prompt result request-timestamp)
+                      (funcall callback result)
+                      (message "Done."))))
+        :error (cl-function (lambda (&rest args &key error-thrown &allow-other-keys)
+                              (message "Got error: %S, payload: %S" error-thrown payload))))
+      result)))
 
 (defun aide--openai-chat-string (string callback)
   (aide-openai-chat (funcall aide-openai-api-key-getter) string callback))
 
-(defun get-min-point ()
+(defun prepare-prompt-memory-input (current-point)
+    (if use-memory
+        (if (file-readable-p aide-memory-file)
+            (setq memory (file-to-string aide-memory-file))
+          (progn
+            (setq memory "")
+            (message "No memory found, but enabled!")
+            (sleep-for 3)))) ; let user see the message
+    (prompt-for-gpt-input) ;; sets gpt-prompt
+    (let ((prompt (make-prompt memory gpt-prompt
+                               (buffer-substring-no-properties (point-min) current-point))))
+      (if (> (length prompt) max-chars)
+          ;; need to take max-char minus memory and gpt-prompt
+          ;; then take that last NUM chars off of the buffer
+          ;; need to only trim off of the buffer, not the whole thing
+          (make-prompt memory gpt-prompt
+                       (get-last-n-chars
+                        (buffer-substring-no-properties (point-min) current-point)
+                        (- max-chars (+ (length memory) (length gpt-prompt)))))
+        prompt))) ; else return prompt
+
+
+   ; todo validate chars is what point and length etc. are defined in terms of
+
+  ; use this to also load memory, if defined
+  ; three args: memory, instruction, and the document
+  ;   just get the last X char of the document and re-combine
+  ;
+  ;  (buffer-substring-no-properties (point-min) original-point))
+
+ ; if all three are greater -- after conversion -- than ai-max-input-tokens
+; then combine and trim
+; example calculations
+;
+  ; total of all three is less than 4000, pass forward
+  ; total of all three is more than 4000, send only the last THIS AMOUNT of chars from DOCUMENT (- 4000 (+ (length memory) (length instructions))
+ (let ((abc (current-time)))
+(sleep-for 2.5)
+(float-time (time-subtract (current-time) abc)
+))
+
+(defun make-prompt (memory instructions buffer)
+  (concat
+   memory ;;; Memory first for basic context that doesn't change; who I am, what we're doing..
+   "Instructions: "
+   gpt-prompt
+   "\n\The most recent scene(s) in the story so far: \n\n"
+   buffer))
+
+(defun get-min-point-org ()
   "OpenAI API limits requests of > ~4000 tokens (model-specific; davinci
 maxes out at request of 4000 tokens; ~15200 char)"
   (if (> (buffer-size) (* 4 (or aide-max-input-tokens 3800))) ;; 1 tokens = ~4 char
       (- (point-max) (* 4 (or aide-max-input-tokens 3800)))
     (point-min)))
 
-(defun log-call-response (prompt response)
+(defun log-call-response (prompt response request-timestamp)
   (if aide-save-chat-file
       (write-region
-      ; Starting with * allows users to view log w/ org mode for easy folding
-       (concat "\n\n* " (current-time-string) "\n" prompt "\n" response)
+      ;; Starting with * allows users to view log w/ org mode for easy folding
+      ;; Also log how long the request took, for which model
+       (concat "\n\n* " (current-time-string)
+               "(" (float-time (time-subtract (current-time) request-timestamp))
+               ";" aide-chat-model
+               ")"
+               "\n" prompt "\n" response)
        nil aide-save-chat-file 'append)))
 
 (defvar gpt-prompt "" "Prompt for OpenAI chat.")
@@ -255,6 +295,12 @@ maxes out at request of 4000 tokens; ~15200 char)"
   (with-temp-buffer
     (insert-file-contents file)
     (buffer-string)))
+
+(defun get-last-n-chars (str num)
+  "Return the last NUM characters of STR."
+  (if (> num (length str))
+      str  ; Return the original string if NUM is larger than the length of the string
+    (substring str (- (length str) num))))
 
 (provide 'aide)
 ;;; aide.el ends here
