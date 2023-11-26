@@ -236,26 +236,6 @@ PROMPT is the prompt string we send to the API."
                         (- max-chars (+ (length memory) (length gpt-prompt)))))
         prompt))) ; else return prompt
 
-
-   ; todo validate chars is what point and length etc. are defined in terms of
-
-  ; use this to also load memory, if defined
-  ; three args: memory, instruction, and the document
-  ;   just get the last X char of the document and re-combine
-  ;
-  ;  (buffer-substring-no-properties (point-min) original-point))
-
- ; if all three are greater -- after conversion -- than ai-max-input-tokens
-; then combine and trim
-; example calculations
-;
-  ; total of all three is less than 4000, pass forward
-  ; total of all three is more than 4000, send only the last THIS AMOUNT of chars from DOCUMENT (- 4000 (+ (length memory) (length instructions))
- (let ((abc (current-time)))
-(sleep-for 2.5)
-(float-time (time-subtract (current-time) abc)
-))
-
 (defun make-prompt (memory instructions buffer)
   (concat
    memory ;;; Memory first for basic context that doesn't change; who I am, what we're doing..
