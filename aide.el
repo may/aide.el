@@ -33,16 +33,18 @@
   :group 'external
   :prefix "aide-")
 
-
 ;(defcustom aide-chat-model "gpt-4-1106-preview" ; best in class; EXPENSIVE. ~slow
-;(defcustom aide-chat-model "gpt-4" ; good enough
-(defcustom aide-chat-model "gpt-3.5-turbo" ; good enough; cheap! fast! (gpt-3.5-turbo-instruct not available at chat endpoint)
+(defcustom aide-chat-model "gpt-4" ; good enough
+;(defcustom aide-chat-model "gpt-3.5-turbo" ; good enough; cheap! fast! (gpt-3.5-turbo-instruct not available at chat endpoint)
   "The model paramater that aide.el sends to OpenAI Chat API."
   :type 'string
   :group 'aide)
 
 ; GPT-4 and GPT 3.5 are 4k, with more expensive options available
-(defcustom aide-max-input-tokens 4000 ; 16,385 coming in Dec 2023 ;; 128000
+;(defcustom aide-max-input-tokens 128000
+
+;;(defcustom aide-max-input-tokens 4000  ; gpt3
+  (defcustom aide-max-input-tokens 8190 ; gpt4 16,385 coming in Dec 2023 ;; 128000
   "The maximum number of tokens that aide.el sends to OpenAI API.
 Only affects the send COMPLETE buffer function."
   :type 'integer
@@ -85,18 +87,18 @@ Only affects the send COMPLETE buffer function."
   :type 'function
   :group 'aide)
 
-(defcustom aide-memory-file "~/memory.txt"
+(defcustom aide-memory-file "~/Documents/memory.txt"
   "The location in the file system where all of the prompt information, the memory,
 that doesn't change between generations should be kept."
   :type 'string
   :group 'aide)
 
-(defcustom use-memory 1
+(defcustom use-memory 1 ; nil
   "Should the system load the memory file, additional prompt information, or not?"
   :type 'boolean
   :group 'aide)
 
-(defcustom aide-save-chat-file "~/aide-log.txt"
+(defcustom aide-save-chat-file "~/Documents/aide-log.org"
   "The location of the chat log; everything sent to and from OpenAI. Nil to disable."
   :type 'function
   :group 'aide)
@@ -221,7 +223,8 @@ PROMPT is the prompt string we send to the API."
           (progn
             (setq memory "")
             (message "No memory found, but enabled!")
-            (sleep-for 3)))) ; let user see the message
+            (sleep-for 3))) ;; let user see the message
+      (setq memory ""))
     (prompt-for-gpt-input) ;; sets gpt-prompt
     (let ((prompt (make-prompt memory gpt-prompt
                                (buffer-substring-no-properties (point-min) current-point))))
@@ -256,7 +259,7 @@ maxes out at request of 4000 tokens; ~15200 char)"
       ;; Starting with * allows users to view log w/ org mode for easy folding
       ;; Also log how long the request took, for which model
        (concat "\n\n* " (current-time-string)
-               "(" (float-time (time-subtract (current-time) request-timestamp))
+               "(" (number-to-string (float-time (time-subtract (current-time) request-timestamp)))
                ";" aide-chat-model
                ")"
                "\n" prompt "\n" response)
